@@ -39,7 +39,7 @@
     "dotenv": "^17.4.2",
     "helmet": "^8.2.0",
     "multer": "^2.2.0",
-    "nodemailer": "^9.0.3",
+    "nodemailer": "^10.1.1",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "prisma": "^6.19.3",
@@ -74,6 +74,9 @@
     "tsconfig-paths": "^4.2.0",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.20.0"
+  },
+  "overrides": {
+    "nodemailer": "$nodemailer"
   },
   "jest": {
     "moduleFileExtensions": [

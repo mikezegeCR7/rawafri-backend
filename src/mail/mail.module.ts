@@ -1,6 +1,13 @@
 import { Module } from '@nestjs/common';
-import { MailerModule } from '@nestjs-modules/mailer';
+import { MailerModule, type MailerOptions } from '@nestjs-modules/mailer';
 import { MailService } from './mail.service';
+
+// nodemailer 10 ships its own type definitions, which no longer line up with
+// @nestjs-modules/mailer's `defaults` type. At runtime nodemailer still applies
+// `defaults` (including `from`) to every message, so only the type is asserted.
+const mailDefaults = {
+  from: `"RawAfri" <${process.env.SMTP_FROM}>`,
+} as MailerOptions['defaults'];
 
 @Module({
   imports: [
@@ -14,9 +21,7 @@ import { MailService } from './mail.service';
           pass: process.env.SMTP_PASS,
         },
       },
-      defaults: {
-        from: `"RawAfri" <${process.env.SMTP_FROM}>`,
-      },
+      defaults: mailDefaults,
     }),
   ],
   providers: [MailService],
