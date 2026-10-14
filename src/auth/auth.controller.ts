@@ -1,6 +1,6 @@
 import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
 import { ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
-import { Throttle } from '@nestjs/throttler';
+import { LimitPerMinute } from '../common/throttle';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
@@ -25,18 +25,18 @@ export class AuthController {
   @Public()
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
-  @Throttle({ short: { ttl: 60000, limit: 5 }, medium: { ttl: 60000, limit: 5 } })
+  @LimitPerMinute(5)
   @ApiCreatedResponse({ type: AuthResponseDto })
   register(@Body() dto: RegisterDto): Promise<AuthResponseDto> {
     return this.authService.register(dto);
   }
   // POST /api/v1/auth/login
-  // Max 5 attempts per minute
+  // Max 10 attempts per minute per IP (allows for shared mobile-carrier IPs)
   @Public()
   @BypassMaintenance()
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ short: { ttl: 60000, limit: 5 }, medium: { ttl: 60000, limit: 5 } })
+  @LimitPerMinute(10)
   @ApiOkResponse({ type: AuthResponseDto })
   login(@Body() dto: LoginDto): Promise<AuthResponseDto> {
     return this.authService.login(dto);
@@ -45,6 +45,7 @@ export class AuthController {
   @Public()
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
+  @LimitPerMinute(3)
   @ApiOkResponse({ type: MessageResponseDto })
   forgotPassword(
     @Body() dto: ForgotPasswordDto,
@@ -55,6 +56,7 @@ export class AuthController {
   @Public()
   @Post('verify-otp')
   @HttpCode(HttpStatus.OK)
+  @LimitPerMinute(5)
   @ApiOkResponse({ type: MessageResponseDto })
   verifyOtp(
     @Body() dto: VerifyOtpDto,
@@ -65,6 +67,7 @@ export class AuthController {
   @Public()
   @Post('reset-password')
   @HttpCode(HttpStatus.OK)
+  @LimitPerMinute(5)
   @ApiOkResponse({ type: MessageResponseDto })
   resetPassword(
     @Body() dto: ResetPasswordDto,
@@ -76,6 +79,7 @@ export class AuthController {
   @Public()
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
+  @LimitPerMinute(30)
   @ApiOkResponse({ type: AuthResponseDto })
   refresh(@Body() dto: RefreshTokenDto): Promise<AuthResponseDto> {
     return this.authService.refresh(dto);

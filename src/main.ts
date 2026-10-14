@@ -7,9 +7,18 @@ import {
 } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
+import { validateEnv } from './config/env.validation';
 
 async function bootstrap() {
+  validateEnv();
+
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+
+  // Render (and most hosts) sit one proxy in front of the app. Trusting exactly
+  // one hop makes req.ip the real visitor IP, so rate limits apply per visitor
+  // instead of everyone sharing the proxy's address. Not `true`: that would let
+  // clients spoof X-Forwarded-For and dodge the limits.
+  app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS ?? 1));
 
   // Security headers
   app.use(helmet());

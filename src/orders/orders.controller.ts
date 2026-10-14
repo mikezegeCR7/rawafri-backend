@@ -15,6 +15,7 @@ import type { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
+import { LimitPerMinute } from '../common/throttle';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
@@ -68,6 +69,7 @@ export class OrdersController {
   }
 
   // POST /api/v1/orders/:id/send-delivery-otp — Customer only
+  @LimitPerMinute(3)
   @Post(':id/send-delivery-otp')
   @Roles(Role.CUSTOMER)
   @UseGuards(RolesGuard)
@@ -80,6 +82,7 @@ export class OrdersController {
   }
 
   // POST /api/v1/orders/:id/confirm-delivery-otp — Customer only
+  @LimitPerMinute(5)
   @Post(':id/confirm-delivery-otp')
   @Roles(Role.CUSTOMER)
   @UseGuards(RolesGuard)

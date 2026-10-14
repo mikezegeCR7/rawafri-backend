@@ -14,6 +14,7 @@ import {
 } from '@nestjs/swagger';
 import type { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { LimitPerMinute } from '../common/throttle';
 import { ComplaintsService } from './complaints.service';
 import { CreateComplaintDto } from './dto/create-complaint.dto';
 import { ComplaintResponseDto } from './dto/complaint-response.dto';
@@ -31,6 +32,7 @@ export class ComplaintsController {
     status: 201,
     type: ComplaintResponseDto,
   })
+  @LimitPerMinute(5)
   @Post()
   create(
     @CurrentUser() user: JwtPayload,

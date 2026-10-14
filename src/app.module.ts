@@ -25,26 +25,11 @@ import { StorageModule } from './common/storage/storage.module';
 import { WishlistModule } from './wishlist/wishlist.module';
 import { SettingsModule } from './settings/settings.module';
 import { MaintenanceGuard } from './common/guards/maintenance.guard';
+import { THROTTLERS } from './common/throttle';
 
 @Module({
   imports: [
-    ThrottlerModule.forRoot([
-      {
-        name: 'short',
-        ttl: 1000,
-        limit: 3,
-      },
-      {
-        name: 'medium',
-        ttl: 10000,
-        limit: 20,
-      },
-      {
-        name: 'long',
-        ttl: 60000,
-        limit: 100,
-      },
-    ]),
+    ThrottlerModule.forRoot(THROTTLERS),
     PrismaModule,
     StorageModule,
     AuthModule,

@@ -15,6 +15,7 @@ import { Role } from '@prisma/client';
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
+import { LimitPerMinute } from '../common/throttle';
 import { PromoCodesService } from './promoCodes.service';
 import { CreatePromoCodeDto, UpdatePromoCodeDto, ValidatePromoCodeDto } from './dto';
 
@@ -47,6 +48,7 @@ export class PromoCodesController {
   }
 
   // POST /api/v1/promo-codes/validate — Authenticated customers
+  @LimitPerMinute(10)
   @Post('validate')
   @HttpCode(HttpStatus.OK)
   validate(@Body() dto: ValidatePromoCodeDto) {
