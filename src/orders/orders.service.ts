@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -14,6 +15,7 @@ import {
   OrderStatusHistory,
   OtpPurpose,
   Payment,
+  Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
@@ -31,10 +33,22 @@ export interface CreatedOrder {
 
 type ResolvedItem = {
   productId: string;
+  productName: string;
   quantity: number;
   unitPrice: Decimal;
   lineTotal: Decimal;
 };
+
+/** Combines lines for the same product so checks see the full quantity. */
+function mergeDuplicateItems(items: OrderItemDto[]): OrderItemDto[] {
+  const byProduct = new Map<string, OrderItemDto>();
+  for (const item of items) {
+    const existing = byProduct.get(item.productId);
+    if (existing) existing.quantity += item.quantity;
+    else byProduct.set(item.productId, { productId: item.productId, quantity: item.quantity });
+  }
+  return [...byProduct.values()];
+}
 
 const TERMINAL_STATUSES: OrderStatus[] = [
   OrderStatus.DELIVERED,
@@ -81,14 +95,17 @@ export class OrdersService {
       throw new NotFoundException(`Delivery zone ${dto.deliveryZoneId} not found`);
     }
 
-    const resolvedItems = await this.resolveItems(dto.items);
+    // The same product listed twice is one line with the combined quantity, so
+    // stock and minimum-order checks see the real total.
+    const resolvedItems = await this.resolveItems(mergeDuplicateItems(dto.items));
 
     let promoCodeId: string | null = null;
+    let promoMaxUses = 0;
     let discountPercent = new Decimal(0);
 
     if (dto.promoCode) {
       const promo = await this.prisma.promoCode.findUnique({
-        where: { code: dto.promoCode },
+        where: { code: dto.promoCode.trim().toUpperCase() },
       });
 
       if (!promo) {
@@ -105,6 +122,7 @@ export class OrdersService {
       }
 
       promoCodeId = promo.id;
+      promoMaxUses = promo.maxUses;
       discountPercent = promo.discountPercent;
     }
 
@@ -117,9 +135,67 @@ export class OrdersService {
     const discountAmount = subtotal.mul(discountPercent).div(100).toDecimalPlaces(2);
     const totalAmount = subtotal.add(deliveryFee).sub(discountAmount).toDecimalPlaces(2);
 
-    const orderNumber = await this.generateOrderNumber();
+    // Order numbers come from a count, so two orders placed at the same moment
+    // can collide on the unique orderNumber; retry with a fresh number.
+    let result!: CreatedOrder;
+    for (let attempt = 1; ; attempt++) {
+      const orderNumber = await this.generateOrderNumber();
+      try {
+        result = await this.createOrderRecords(customerId, dto, address, orderNumber, {
+          resolvedItems,
+          subtotal,
+          deliveryFee,
+          discountAmount,
+          totalAmount,
+          promoCodeId,
+          promoMaxUses,
+        });
+        break;
+      } catch (error) {
+        const orderNumberTaken =
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002' &&
+          String(error.meta?.target ?? '').includes('orderNumber');
+        if (!orderNumberTaken || attempt >= 3) throw error;
+      }
+    }
 
-    const result = await this.prisma.$transaction(async (tx) => {
+    try {
+      await this.notificationsService.notifyAllAdmins(
+        'ORDER_STATUS',
+        'New Order Received',
+        `Order ${result.order.orderNumber} was just placed — ₦${Number(result.order.totalAmount).toLocaleString('en-NG')}.`,
+        result.order.id,
+      );
+    } catch (error) {
+      console.error('Failed to notify admins of new order', error);
+    }
+
+    return result;
+  }
+
+  /** Writes the order, items, stock, payment and promo use in one transaction.
+   * Stock and promo limits are enforced by conditional updates inside the
+   * transaction, so two simultaneous orders can't both take the last unit
+   * or the last promo use. */
+  private async createOrderRecords(
+    customerId: string,
+    dto: CreateOrderDto,
+    address: { contactName: string; phone: string; line1: string; city: string; state: string; landmark: string | null },
+    orderNumber: string,
+    totals: {
+      resolvedItems: ResolvedItem[];
+      subtotal: Decimal;
+      deliveryFee: Decimal;
+      discountAmount: Decimal;
+      totalAmount: Decimal;
+      promoCodeId: string | null;
+      promoMaxUses: number;
+    },
+  ): Promise<CreatedOrder> {
+    const { resolvedItems, subtotal, deliveryFee, discountAmount, totalAmount, promoCodeId, promoMaxUses } = totals;
+
+    return this.prisma.$transaction(async (tx) => {
       const order = await tx.order.create({
         data: {
           orderNumber,
@@ -141,9 +217,20 @@ export class OrdersService {
         },
       });
 
-      const orderItems = await Promise.all(
-        resolvedItems.map(async (item) => {
-          const orderItem = await tx.orderItem.create({
+      const orderItems: OrderItem[] = [];
+      for (const item of resolvedItems) {
+        // Take stock only if enough is still there at this moment.
+        const taken = await tx.inventory.updateMany({
+          where: { productId: item.productId, stockQuantity: { gte: item.quantity } },
+          data: { stockQuantity: { decrement: item.quantity } },
+        });
+        if (taken.count === 0) {
+          throw new BadRequestException(
+            `"${item.productName}" no longer has enough stock for this order. Please adjust the quantity.`,
+          );
+        }
+        orderItems.push(
+          await tx.orderItem.create({
             data: {
               orderId: order.id,
               productId: item.productId,
@@ -151,20 +238,9 @@ export class OrdersService {
               unitPrice: item.unitPrice,
               lineTotal: item.lineTotal,
             },
-          });
-          await tx.inventory.update({
-            where: {
-              productId: item.productId,
-            },
-            data: {
-              stockQuantity: {
-                decrement: item.quantity,
-              },
-            },
-          });
-          return orderItem;
-        }),
-      );
+          }),
+        );
+      }
 
       const statusHistory = await tx.orderStatusHistory.create({
         data: {
@@ -184,33 +260,18 @@ export class OrdersService {
       });
 
       if (promoCodeId) {
-        await tx.promoCode.update({
-          where: {
-            id: promoCodeId,
-          },
-          data: {
-            usedCount: {
-              increment: 1,
-            },
-          },
+        // Use the promo only while it still has uses left at this moment.
+        const used = await tx.promoCode.updateMany({
+          where: { id: promoCodeId, usedCount: { lt: promoMaxUses } },
+          data: { usedCount: { increment: 1 } },
         });
+        if (used.count === 0) {
+          throw new BadRequestException(`Promo code "${dto.promoCode}" has reached its usage limit`);
+        }
       }
 
-            return { order, orderItems, payment, statusHistory };
+      return { order, orderItems, payment, statusHistory };
     });
-
-    try {
-      await this.notificationsService.notifyAllAdmins(
-        'ORDER_STATUS',
-        'New Order Received',
-        `Order ${result.order.orderNumber} was just placed — ₦${Number(result.order.totalAmount).toLocaleString('en-NG')}.`,
-        result.order.id,
-      );
-    } catch (error) {
-      console.error('Failed to notify admins of new order', error);
-    }
-
-    return result;
   }
 
   async findMyOrders(customerId: string): Promise<Order[]> {
@@ -566,9 +627,37 @@ export class OrdersService {
     }
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      const updatedOrder = await tx.order.update({
-        where: { id: orderId },
+      // Only move the order if it is still in the status we validated against —
+      // two admins acting at once can't both apply (e.g. restock twice).
+      const moved = await tx.order.updateMany({
+        where: { id: orderId, status: order.status },
         data: { status: dto.status },
+      });
+      if (moved.count === 0) {
+        throw new ConflictException(
+          'This order was just updated by someone else. Refresh and try again.',
+        );
+      }
+
+      // Cancelling returns the items to stock and gives back the promo use.
+      if (dto.status === OrderStatus.CANCELLED) {
+        const items = await tx.orderItem.findMany({ where: { orderId } });
+        for (const item of items) {
+          await tx.inventory.updateMany({
+            where: { productId: item.productId },
+            data: { stockQuantity: { increment: item.quantity } },
+          });
+        }
+        if (order.promoCodeId) {
+          await tx.promoCode.updateMany({
+            where: { id: order.promoCodeId, usedCount: { gt: 0 } },
+            data: { usedCount: { decrement: 1 } },
+          });
+        }
+      }
+
+      const updatedOrder = await tx.order.findUniqueOrThrow({
+        where: { id: orderId },
         include: {
           customer: {
             select: {
@@ -640,6 +729,7 @@ export class OrdersService {
 
         return {
           productId: item.productId,
+          productName: product.name,
           quantity: item.quantity,
           unitPrice,
           lineTotal,
