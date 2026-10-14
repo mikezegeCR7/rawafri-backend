@@ -1,0 +1,446 @@
+// RawAfri — production PostgreSQL schema
+// Source of truth: ARCHITECTURE.md
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum Role {
+  CUSTOMER
+  ADMIN
+}
+
+enum AddressType {
+  HOME
+  WORK
+  OTHER
+}
+
+enum OtpPurpose {
+  PASSWORD_RESET
+  DELIVERY_CONFIRMATION
+}
+
+enum OrderStatus {
+  ORDER_RECEIVED
+  AWAITING_PAYMENT
+  PAYMENT_CONFIRMED
+  PREPARING_ORDER
+  OUT_FOR_DELIVERY
+  AWAITING_CUSTOMER_CONFIRMATION
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  UPLOADED
+  VERIFIED
+  REJECTED
+}
+
+enum NotificationType {
+  ORDER_STATUS
+  PAYMENT
+  SYSTEM
+}
+
+enum ComplaintStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+model PlatformSettings {
+  id              String   @id @default(uuid())
+  maintenanceMode Boolean  @default(false)
+  updatedAt       DateTime @updatedAt
+
+  @@map("platform_settings")
+}
+
+// ─── Auth & Users ────────────────────────────────────────────────────────────
+
+model User {
+  id           String  @id @default(uuid())
+  email        String  @unique
+  passwordHash String
+  phone        String  @unique
+  firstName    String
+  lastName     String
+  role         Role    @default(CUSTOMER)
+  refreshToken String? @db.Text
+  isActive     Boolean @default(true)
+
+  addresses          Address[]
+  orders             Order[]              @relation("CustomerOrders")
+  notifications      Notification[]
+  orderStatusChanges OrderStatusHistory[] @relation("StatusChangedBy")
+  verifiedPayments   Payment[]            @relation("PaymentVerifiedBy")
+  rejectedPayments   Payment[]            @relation("PaymentRejectedBy")
+  complaints Complaint[]
+  wishlistItems WishlistItem[]
+  productViews ProductView[]
+
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([role, isActive])
+  @@map("users")
+}
+
+/// Single-use, time-bound OTP records for password reset and similar flows.
+/// Security: store only a bcrypt hash of the 6-digit code — never the plaintext OTP.
+/// On verify, hash-compare the submitted code against `codeHash`.
+/// Invalidate prior unused tokens by setting `expiresAt = now()` before issuing a new one.
+model OtpToken {
+  id         String     @id @default(uuid())
+  identifier String // email address the OTP was sent to
+  codeHash   String     @db.Text // bcrypt hash of the 6-digit OTP — never store plaintext
+  purpose    OtpPurpose
+  expiresAt  DateTime
+  usedAt     DateTime? // set on successful verification; null means unused
+
+  createdAt DateTime @default(now())
+
+  @@index([identifier, purpose])
+  @@index([identifier, purpose, usedAt])
+  @@index([expiresAt])
+  @@map("otp_tokens")
+}
+
+// ─── Addresses & Delivery ────────────────────────────────────────────────────
+
+model Address {
+  id          String      @id @default(uuid())
+  userId      String
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label       String
+  type        AddressType @default(OTHER)
+  contactName String
+  phone       String
+  line1       String
+  city        String
+  state       String
+  landmark    String?
+  isDefault   Boolean     @default(false)
+  isActive    Boolean     @default(true)
+
+  orders Order[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([userId, isDefault])
+  @@index([userId, isActive])
+  @@map("addresses")
+}
+
+model DeliveryZone {
+  id            String  @id @default(uuid())
+  name          String  @unique
+  fee           Decimal @db.Decimal(10, 2)
+  estimatedTime String
+  isActive      Boolean @default(true)
+
+  orders Order[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+  @@map("delivery_zones")
+}
+
+// ─── Catalog ─────────────────────────────────────────────────────────────────
+
+model Category {
+  id          String  @id @default(uuid())
+  name        String  @unique
+  slug        String  @unique
+  description String?
+  imageUrl    String?
+  sortOrder   Int     @default(0)
+  isActive    Boolean @default(true)
+
+  products Product[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, sortOrder])
+  @@map("categories")
+}
+
+model Product {
+  id               String   @id @default(uuid())
+  categoryId       String
+  category         Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  name             String
+  slug             String   @unique
+  description      String?
+  price            Decimal  @db.Decimal(10, 2)
+  imageUrl         String?
+  minOrderQuantity Int      @default(1)
+  isActive         Boolean  @default(true)
+
+  inventory  Inventory?
+  orderItems OrderItem[]
+  wishlistedBy WishlistItem[]
+  viewedBy ProductView[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([categoryId])
+  @@index([isActive, categoryId])
+  @@index([name])
+  @@map("products")
+}
+
+model WishlistItem {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, productId])
+  @@index([userId])
+  @@map("wishlist_items")
+}
+
+model ProductView {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  viewedAt DateTime @default(now())
+
+  @@unique([userId, productId])
+  @@index([userId, viewedAt])
+  @@map("product_views")
+}
+
+model Inventory {
+  id                String  @id @default(uuid())
+  productId         String  @unique
+  product           Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  stockQuantity     Int     @default(0)
+  lowStockThreshold Int     @default(10)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([stockQuantity])
+  @@map("inventory")
+}
+
+// ─── Promotions ──────────────────────────────────────────────────────────────
+
+model PromoCode {
+  id              String   @id @default(uuid())
+  code            String   @unique
+  discountPercent Decimal  @db.Decimal(5, 2)
+  label           String
+  maxUses         Int
+  usedCount       Int      @default(0)
+  expiresAt       DateTime
+  isActive        Boolean  @default(true)
+
+  orders Order[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, expiresAt])
+  @@map("promo_codes")
+}
+
+// ─── Orders ──────────────────────────────────────────────────────────────────
+
+model Order {
+  id          String      @id @default(uuid())
+  orderNumber String      @unique // human-readable ref, e.g. RAW-2026-000001 — assigned server-side
+  customerId  String
+  customer    User        @relation("CustomerOrders", fields: [customerId], references: [id], onDelete: Restrict)
+  status      OrderStatus @default(ORDER_RECEIVED)
+
+  addressId String?
+  address   Address? @relation(fields: [addressId], references: [id], onDelete: SetNull)
+
+  deliveryZoneId String
+  deliveryZone   DeliveryZone @relation(fields: [deliveryZoneId], references: [id], onDelete: Restrict)
+
+  promoCodeId    String?
+  promoCode      PromoCode? @relation(fields: [promoCodeId], references: [id], onDelete: SetNull)
+  discountAmount Decimal    @default(0) @db.Decimal(12, 2)
+
+  subtotal    Decimal @db.Decimal(12, 2)
+  deliveryFee Decimal @db.Decimal(10, 2)
+  totalAmount Decimal @db.Decimal(12, 2)
+
+  // Immutable delivery snapshot — copied at order creation, independent of profile/address edits
+  deliveryContactName String
+  deliveryPhone       String
+  deliveryAddress     String
+  deliveryCity        String
+  deliveryState       String
+  deliveryNotes       String?
+
+  items         OrderItem[]
+  payment       Payment?
+  statusHistory OrderStatusHistory[]
+  notifications Notification[]
+  complaints Complaint[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([status])
+  @@index([deliveryZoneId])
+  @@index([promoCodeId])
+  @@index([addressId])
+  @@index([createdAt])
+  @@index([customerId, status])
+  @@index([status, createdAt])
+  @@map("orders")
+}
+
+model OrderItem {
+  id        String  @id @default(uuid())
+  orderId   String
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  quantity  Int
+  unitPrice Decimal @db.Decimal(10, 2)
+  lineTotal Decimal @db.Decimal(12, 2)
+
+  @@unique([orderId, productId])
+  @@index([orderId])
+  @@index([productId])
+  @@map("order_items")
+}
+
+model OrderStatusHistory {
+  id          String      @id @default(uuid())
+  orderId     String
+  order       Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  status      OrderStatus
+  changedById String?
+  changedBy   User?       @relation("StatusChangedBy", fields: [changedById], references: [id], onDelete: SetNull)
+  note        String?
+
+  createdAt DateTime @default(now())
+
+  @@index([orderId, createdAt])
+  @@index([changedById])
+  @@map("order_status_history")
+}
+
+// ─── Complaints ────────────────────────────────────────────────────────────────
+
+model Complaint {
+  id             String            @id @default(uuid())
+  customerId     String
+  orderId        String?
+  subject        String
+  message        String            @db.Text
+  status         ComplaintStatus   @default(OPEN)
+  adminResponse  String?           @db.Text
+  resolvedAt     DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  customer User   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  order    Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([orderId])
+  @@index([status])
+}
+
+// ─── Payments ────────────────────────────────────────────────────────────────
+
+model Payment {
+  id      String        @id @default(uuid())
+  orderId String        @unique
+  order   Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  status  PaymentStatus @default(PENDING)
+  amount  Decimal       @db.Decimal(12, 2)
+
+  proofImageUrl String?
+
+  verifiedById String?
+  verifiedBy   User?     @relation("PaymentVerifiedBy", fields: [verifiedById], references: [id], onDelete: SetNull)
+  verifiedAt   DateTime?
+
+  rejectedById    String?
+  rejectedBy      User?     @relation("PaymentRejectedBy", fields: [rejectedById], references: [id], onDelete: SetNull)
+  rejectedAt      DateTime?
+  rejectionReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([status, createdAt])
+  @@index([verifiedById])
+  @@index([rejectedById])
+  @@map("payments")
+}
+
+model BankAccount {
+  id            String  @id @default(uuid())
+  bankName      String
+  accountName   String
+  accountNumber String
+  isActive      Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([bankName, accountNumber])
+  @@index([isActive])
+  @@map("bank_accounts")
+}
+
+// ─── Notifications ───────────────────────────────────────────────────────────
+
+model Notification {
+  id     String           @id @default(uuid())
+  userId String
+  user   User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type   NotificationType @default(SYSTEM)
+
+  orderId String?
+  order   Order?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  title   String
+  message String
+  isRead  Boolean   @default(false)
+  readAt  DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+  @@index([orderId])
+  @@map("notifications")
+}
