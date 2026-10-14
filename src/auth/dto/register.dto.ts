@@ -3,8 +3,8 @@ import {
   IsNotEmpty,
   IsString,
   MaxLength,
-  MinLength,
 } from 'class-validator';
+import { NigerianPhone, StrongPassword } from '../../users/validators/account-rules';
 
 export class RegisterDto {
   @IsString()
@@ -22,13 +22,9 @@ export class RegisterDto {
   @MaxLength(255)
   email: string;
 
-  @IsString()
-  @IsNotEmpty()
+  @NigerianPhone()
   phone: string;
 
-  @IsString()
-  @IsNotEmpty()
-  @MinLength(8)
-  @MaxLength(128)
+  @StrongPassword()
   password: string;
 }

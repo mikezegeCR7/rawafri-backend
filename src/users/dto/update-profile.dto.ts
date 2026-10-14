@@ -2,10 +2,9 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
-  Matches,
   MaxLength,
 } from 'class-validator';
-import { NIGERIAN_PHONE_REGEX } from '../constants/users.constants';
+import { NigerianPhone } from '../validators/account-rules';
 
 export class UpdateProfileDto {
   @IsOptional()
@@ -21,9 +20,6 @@ export class UpdateProfileDto {
   lastName?: string;
 
   @IsOptional()
-  @IsString()
-  @Matches(NIGERIAN_PHONE_REGEX, {
-    message: 'Phone must be a valid Nigerian phone number',
-  })
+  @NigerianPhone()
   phone?: string;
 }

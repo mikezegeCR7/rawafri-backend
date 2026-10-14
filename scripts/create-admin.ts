@@ -21,6 +21,7 @@ import {
   NIGERIAN_PHONE_REGEX,
   PASSWORD_STRENGTH_REGEX,
 } from '../src/users/constants/users.constants';
+import { normalizeNigerianPhone } from '../src/users/validators/account-rules';
 
 const prisma = new PrismaClient();
 
@@ -54,7 +55,7 @@ async function main() {
   const password = required('ADMIN_PASSWORD');
   const firstName = required('ADMIN_FIRST_NAME');
   const lastName = required('ADMIN_LAST_NAME');
-  const phone = required('ADMIN_PHONE');
+  const phone = String(normalizeNigerianPhone(required('ADMIN_PHONE')));
 
   // Same rules the API enforces for normal sign-ups.
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
