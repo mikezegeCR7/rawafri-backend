@@ -37,15 +37,19 @@ async function bootstrap() {
   // Global prefix
   app.setGlobalPrefix('api/v1');
 
-  // Swagger
-  const config = new DocumentBuilder()
-    .setTitle('RawAfri API')
-    .setDescription('RawAfri E-commerce API')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+  // Swagger — development only. In production it would publish a full map of
+  // the API (admin routes included) to anyone. The frontend codegen reads
+  // /api/docs-json from a local backend, so it is unaffected.
+  if (process.env.NODE_ENV !== 'production') {
+    const config = new DocumentBuilder()
+      .setTitle('RawAfri API')
+      .setDescription('RawAfri E-commerce API')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api/docs', app, document);
+  }
 
   const port = process.env.PORT ?? 3000;
   await app.listen(port);
