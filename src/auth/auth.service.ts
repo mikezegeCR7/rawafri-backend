@@ -22,6 +22,7 @@ import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { AuthResponse } from './types/auth-response.type';
 import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { verifyOtpAttempt } from '../common/otp-attempts';
 
 @Injectable()
 export class AuthService {
@@ -152,13 +153,7 @@ export class AuthService {
     if (otpToken.expiresAt < new Date()) {
       throw new BadRequestException('OTP has expired');
     }
-    const isValid = await bcrypt.compare(
-      dto.otp,
-      otpToken.codeHash,
-    );
-    if (!isValid) {
-      throw new BadRequestException('Invalid or expired OTP');
-    }
+    await verifyOtpAttempt(this.prisma, otpToken, dto.otp);
     await this.prisma.otpToken.update({
       where: {
         id: otpToken.id,
@@ -198,15 +193,7 @@ export class AuthService {
         'OTP has expired',
       );
     }
-    const isValid = await bcrypt.compare(
-      dto.otp,
-      otpToken.codeHash,
-    );
-    if (!isValid) {
-      throw new BadRequestException(
-        'Invalid OTP',
-      );
-    }
+    await verifyOtpAttempt(this.prisma, otpToken, dto.otp);
     const user = await this.usersService.findByEmail(dto.email);
     if (!user) {
       throw new BadRequestException(

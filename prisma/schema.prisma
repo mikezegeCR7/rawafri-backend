@@ -109,6 +109,7 @@ model OtpToken {
   purpose    OtpPurpose
   expiresAt  DateTime
   usedAt     DateTime? // set on successful verification; null means unused
+  attempts   Int        @default(0) // wrong guesses so far; the code is retired after MAX_OTP_ATTEMPTS
 
   createdAt DateTime @default(now())
 

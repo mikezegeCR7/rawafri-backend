@@ -21,6 +21,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { BCRYPT_ROUNDS } from '../users/constants/users.constants';
+import { verifyOtpAttempt } from '../common/otp-attempts';
 import { CreateOrderDto, OrderItemDto } from './dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 
@@ -462,10 +463,7 @@ export class OrdersService {
       throw new BadRequestException('This code has expired');
     }
 
-    const isValid = await bcrypt.compare(otp, otpToken.codeHash);
-    if (!isValid) {
-      throw new BadRequestException('Invalid or expired code');
-    }
+    await verifyOtpAttempt(this.prisma, otpToken, otp);
 
     await this.prisma.otpToken.update({
       where: { id: otpToken.id },
