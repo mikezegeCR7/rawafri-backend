@@ -13,6 +13,8 @@ type ProductWithRelations = Product & {
   inventory: { stockQuantity: number } | null;
 };
 
+import { requireImage } from '../common/upload/image-file';
+
 @Injectable()
 export class ProductsService {
   constructor(
@@ -27,12 +29,12 @@ export class ProductsService {
       throw new BadRequestException('No file uploaded');
     }
 
-    const extension = file.originalname.split('.').pop() ?? 'jpg';
-    const key = `products/${Date.now()}-${Math.round(Math.random() * 1e9)}.${extension}`;
+    const image = requireImage(file);
+    const key = `products/${Date.now()}-${Math.round(Math.random() * 1e9)}.${image.extension}`;
     const imageUrl = await this.storageService.uploadFile(
       file.buffer,
       key,
-      file.mimetype,
+      image.contentType,
     );
 
     return { imageUrl };

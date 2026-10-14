@@ -60,6 +60,8 @@ type PaymentListItem = Prisma.PaymentGetPayload<{
   include: typeof PAYMENT_INCLUDE;
 }>;
 
+import { requireImage } from '../common/upload/image-file';
+
 @Injectable()
 export class PaymentsService {
   constructor(
@@ -151,12 +153,12 @@ export class PaymentsService {
       );
     }
 
-    const extension = file.originalname.split('.').pop() ?? 'jpg';
-    const key = `payments/${paymentId}-${Date.now()}.${extension}`;
+    const image = requireImage(file);
+    const key = `payments/${paymentId}-${Date.now()}.${image.extension}`;
     const proofImageUrl = await this.storageService.uploadFile(
       file.buffer,
       key,
-      file.mimetype,
+      image.contentType,
     );
 
     const updatedPayment = await this.prisma.payment.update({
