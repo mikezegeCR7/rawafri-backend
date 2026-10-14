@@ -311,12 +311,15 @@ export class UsersService {
       newPassword,
       BCRYPT_ROUNDS,
     );
+    // Changing the password also revokes the stored refresh token, so any
+    // session on another device (including a stolen one) is signed out.
     await this.prisma.user.update({
       where: {
         id: userId,
       },
       data: {
         passwordHash,
+        refreshToken: null,
       },
     });
   }

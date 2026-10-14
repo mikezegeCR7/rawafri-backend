@@ -29,10 +29,12 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       throw new UnauthorizedException('Access denied');
     }
 
+    // Role and email come from the database, not the token, so a demotion or
+    // change takes effect on the next request rather than when the token expires.
     return {
       sub: payload.sub,
-      email: payload.email,
-      role: payload.role,
+      email: user.email,
+      role: user.role,
     };
   }
 }
