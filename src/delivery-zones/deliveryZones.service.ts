@@ -16,6 +16,19 @@ export class DeliveryZonesService {
       where: { name: dto.name },
     });
 
+    // Removing a zone only deactivates it; adding the same name again restores
+    // it with the new fee and time rather than failing on the hidden record.
+    if (existing && !existing.isActive) {
+      return this.prisma.deliveryZone.update({
+        where: { id: existing.id },
+        data: {
+          fee: Number(dto.fee.toFixed(2)),
+          estimatedTime: dto.estimatedTime,
+          isActive: true,
+        },
+      });
+    }
+
     if (existing) {
       throw new ConflictException(
         `Delivery zone with name "${dto.name}" already exists`,

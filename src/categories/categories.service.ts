@@ -14,6 +14,27 @@ export class CategoriesService {
   // ─── Admin: Create ─────────────────────────────────────────────────────────
 
   async create(dto: CreateCategoryDto): Promise<Category> {
+    // Removing a category only deactivates it. Adding it again (same name or
+    // slug) restores that record with the new details instead of failing
+    // with "already exists" for something the admin can no longer see.
+    const removed = await this.prisma.category.findFirst({
+      where: { isActive: false, OR: [{ name: dto.name }, { slug: dto.slug }] },
+    });
+    if (removed) {
+      await this.checkUnique(dto.name, dto.slug, removed.id);
+      return this.prisma.category.update({
+        where: { id: removed.id },
+        data: {
+          name: dto.name,
+          slug: dto.slug,
+          description: dto.description ?? null,
+          imageUrl: dto.imageUrl ?? null,
+          sortOrder: dto.sortOrder ?? 0,
+          isActive: true,
+        },
+      });
+    }
+
     await this.checkUnique(dto.name, dto.slug);
 
     return this.prisma.category.create({
