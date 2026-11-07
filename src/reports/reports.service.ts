@@ -144,14 +144,17 @@ export class ReportsService {
           isActive: true,
         },
       }),
-      this.prisma.inventory.findMany({
+      this.prisma.productUnit.findMany({
+        where: { isActive: true, product: { isActive: true } },
         select: {
           stockQuantity: true,
           lowStockThreshold: true,
         },
       }),
-      this.prisma.inventory.count({
+      this.prisma.productUnit.count({
         where: {
+          isActive: true,
+          product: { isActive: true },
           stockQuantity: 0,
         },
       }),

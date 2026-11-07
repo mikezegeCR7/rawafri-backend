@@ -151,7 +151,8 @@ export class DashboardService {
           status: PaymentStatus.VERIFIED,
         },
       }),
-      this.prisma.inventory.findMany({
+      this.prisma.productUnit.findMany({
+        where: { isActive: true, product: { isActive: true } },
         select: {
           stockQuantity: true,
           lowStockThreshold: true,

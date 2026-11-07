@@ -33,26 +33,19 @@ async function main() {
   ];
 
   for (const p of testProducts) {
-    const product = await prisma.product.upsert({
+    // Each test product is sold in one unit; real products can have several
+    // (Bag, Paint, Mudu, Cup…) added from the admin panel.
+    await prisma.product.upsert({
       where: { slug: p.slug },
       update: {},
       create: {
         name: p.name,
         slug: p.slug,
         categoryId: p.categoryId,
-        price: p.price,
         isActive: true,
-        minOrderQuantity: 1,
-      },
-    });
-
-    await prisma.inventory.upsert({
-      where: { productId: product.id },
-      update: {},
-      create: {
-        productId: product.id,
-        stockQuantity: 50,
-        lowStockThreshold: 10,
+        units: {
+          create: { name: 'Unit', price: p.price, stockQuantity: 50, lowStockThreshold: 10, minOrderQuantity: 1 },
+        },
       },
     });
   }

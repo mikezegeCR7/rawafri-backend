@@ -86,10 +86,9 @@ model User {
   orderStatusChanges OrderStatusHistory[] @relation("StatusChangedBy")
   verifiedPayments   Payment[]            @relation("PaymentVerifiedBy")
   rejectedPayments   Payment[]            @relation("PaymentRejectedBy")
-  complaints Complaint[]
-  wishlistItems WishlistItem[]
-  productViews ProductView[]
-
+  complaints         Complaint[]
+  wishlistItems      WishlistItem[]
+  productViews       ProductView[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -184,21 +183,21 @@ model Category {
 }
 
 model Product {
-  id               String   @id @default(uuid())
-  categoryId       String
-  category         Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  name             String
-  slug             String   @unique
-  description      String?
-  price            Decimal  @db.Decimal(10, 2)
-  imageUrl         String?
-  minOrderQuantity Int      @default(1)
-  isActive         Boolean  @default(true)
+  id          String   @id @default(uuid())
+  categoryId  String
+  category    Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  name        String
+  slug        String   @unique
+  description String?
+  imageUrl    String?
+  isActive    Boolean  @default(true)
 
-  inventory  Inventory?
-  orderItems OrderItem[]
+  // Price, stock and minimum order live on each selling unit (Bag, Paint,
+  // Mudu, Cup…), so a product has no price of its own.
+  units        ProductUnit[]
+  orderItems   OrderItem[]
   wishlistedBy WishlistItem[]
-  viewedBy ProductView[]
+  viewedBy     ProductView[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -210,11 +209,11 @@ model Product {
 }
 
 model WishlistItem {
-  id        String   @id @default(uuid())
+  id        String  @id @default(uuid())
   userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   productId String
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
 
@@ -224,11 +223,11 @@ model WishlistItem {
 }
 
 model ProductView {
-  id        String   @id @default(uuid())
+  id        String  @id @default(uuid())
   userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   productId String
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   viewedAt DateTime @default(now())
 
@@ -237,18 +236,30 @@ model ProductView {
   @@map("product_views")
 }
 
-model Inventory {
+// A way a product is sold, e.g. Rice -> Bag (50kg), Paint, Mudu, Cup. Each unit
+// has its own price and its own stock count (stock is not converted between
+// units). Units are deactivated rather than deleted so past orders keep them.
+model ProductUnit {
   id                String  @id @default(uuid())
-  productId         String  @unique
+  productId         String
   product           Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name              String
+  price             Decimal @db.Decimal(10, 2)
   stockQuantity     Int     @default(0)
-  lowStockThreshold Int     @default(10)
+  lowStockThreshold Int     @default(5)
+  minOrderQuantity  Int     @default(1)
+  sortOrder         Int     @default(0)
+  isActive          Boolean @default(true)
+
+  orderItems OrderItem[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([productId, name])
+  @@index([productId, isActive])
   @@index([stockQuantity])
-  @@map("inventory")
+  @@map("product_units")
 }
 
 // ─── Promotions ──────────────────────────────────────────────────────────────
@@ -307,7 +318,7 @@ model Order {
   payment       Payment?
   statusHistory OrderStatusHistory[]
   notifications Notification[]
-  complaints Complaint[]
+  complaints    Complaint[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -324,17 +335,23 @@ model Order {
 }
 
 model OrderItem {
-  id        String  @id @default(uuid())
+  id        String      @id @default(uuid())
   orderId   String
-  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order     Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
   productId String
-  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  product   Product     @relation(fields: [productId], references: [id], onDelete: Restrict)
+  unitId    String
+  unit      ProductUnit @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  // Copy of the unit's name at order time, so the order still reads "3 × Mudu"
+  // even if the unit is renamed later.
+  unitName  String
   quantity  Int
-  unitPrice Decimal @db.Decimal(10, 2)
-  lineTotal Decimal @db.Decimal(12, 2)
+  unitPrice Decimal     @db.Decimal(10, 2)
+  lineTotal Decimal     @db.Decimal(12, 2)
 
-  @@unique([orderId, productId])
+  @@unique([orderId, unitId])
   @@index([orderId])
+  @@index([unitId])
   @@index([productId])
   @@map("order_items")
 }
@@ -358,16 +375,16 @@ model OrderStatusHistory {
 // ─── Complaints ────────────────────────────────────────────────────────────────
 
 model Complaint {
-  id             String            @id @default(uuid())
-  customerId     String
-  orderId        String?
-  subject        String
-  message        String            @db.Text
-  status         ComplaintStatus   @default(OPEN)
-  adminResponse  String?           @db.Text
-  resolvedAt     DateTime?
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
+  id            String          @id @default(uuid())
+  customerId    String
+  orderId       String?
+  subject       String
+  message       String          @db.Text
+  status        ComplaintStatus @default(OPEN)
+  adminResponse String?         @db.Text
+  resolvedAt    DateTime?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
 
   customer User   @relation(fields: [customerId], references: [id], onDelete: Cascade)
   order    Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)

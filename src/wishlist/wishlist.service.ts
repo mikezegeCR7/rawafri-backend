@@ -4,38 +4,20 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { PRODUCT_SUMMARY_SELECT, toProductSummary } from '../products/product-summary';
 
 @Injectable()
 export class WishlistService {
   constructor(private readonly prisma: PrismaService) {}
 
-    private readonly productSelect = {
-    id: true,
-    categoryId: true,
-    name: true,
-    slug: true,
-    description: true,
-    price: true,
-    imageUrl: true,
-    minOrderQuantity: true,
-    isActive: true,
-    category: { select: { id: true, name: true } },
-    inventory: { select: { stockQuantity: true } },
-  };
   async findAll(userId: string) {
     const items = await this.prisma.wishlistItem.findMany({
       where: { userId },
       orderBy: { createdAt: 'desc' },
-      include: { product: { select: this.productSelect } },
+      include: { product: { select: PRODUCT_SUMMARY_SELECT } },
     });
 
-    return items.map((item) => ({
-      ...item,
-      product: {
-        ...item.product,
-        price: item.product.price.toFixed(2),
-      },
-    }));
+    return items.map((item) => ({ ...item, product: toProductSummary(item.product) }));
   }
 
     async add(userId: string, productId: string) {
@@ -57,16 +39,10 @@ export class WishlistService {
 
     const item = await this.prisma.wishlistItem.create({
       data: { userId, productId },
-      include: { product: { select: this.productSelect } },
+      include: { product: { select: PRODUCT_SUMMARY_SELECT } },
     });
 
-    return {
-      ...item,
-      product: {
-        ...item.product,
-        price: item.product.price.toFixed(2),
-      },
-    };
+    return { ...item, product: toProductSummary(item.product) };
   }
   async remove(userId: string, productId: string) {
     const existing = await this.prisma.wishlistItem.findUnique({

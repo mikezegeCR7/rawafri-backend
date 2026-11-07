@@ -15,9 +15,10 @@ import {
 import { Type } from 'class-transformer';
 
 export class OrderItemDto {
+  /** The selling unit being bought (e.g. Rice · Mudu). Its product is derived. */
   @IsUUID()
   @IsNotEmpty()
-  productId: string;
+  unitId: string;
 
   @IsInt()
   @Min(1)

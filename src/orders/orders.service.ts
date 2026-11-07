@@ -34,21 +34,25 @@ export interface CreatedOrder {
 
 type ResolvedItem = {
   productId: string;
-  productName: string;
+  unitId: string;
+  unitName: string;
+  /** "Rice (Mudu)", for error messages. */
+  label: string;
   quantity: number;
   unitPrice: Decimal;
   lineTotal: Decimal;
 };
 
-/** Combines lines for the same product so checks see the full quantity. */
+/** Combines lines for the same unit so checks see the full quantity.
+ * The same product in different units (1 Bag + 3 Mudu) stays as separate lines. */
 function mergeDuplicateItems(items: OrderItemDto[]): OrderItemDto[] {
-  const byProduct = new Map<string, OrderItemDto>();
+  const byUnit = new Map<string, OrderItemDto>();
   for (const item of items) {
-    const existing = byProduct.get(item.productId);
+    const existing = byUnit.get(item.unitId);
     if (existing) existing.quantity += item.quantity;
-    else byProduct.set(item.productId, { productId: item.productId, quantity: item.quantity });
+    else byUnit.set(item.unitId, { unitId: item.unitId, quantity: item.quantity });
   }
-  return [...byProduct.values()];
+  return [...byUnit.values()];
 }
 
 const TERMINAL_STATUSES: OrderStatus[] = [
@@ -220,14 +224,14 @@ export class OrdersService {
 
       const orderItems: OrderItem[] = [];
       for (const item of resolvedItems) {
-        // Take stock only if enough is still there at this moment.
-        const taken = await tx.inventory.updateMany({
-          where: { productId: item.productId, stockQuantity: { gte: item.quantity } },
+        // Take this unit's stock only if enough is still there at this moment.
+        const taken = await tx.productUnit.updateMany({
+          where: { id: item.unitId, isActive: true, stockQuantity: { gte: item.quantity } },
           data: { stockQuantity: { decrement: item.quantity } },
         });
         if (taken.count === 0) {
           throw new BadRequestException(
-            `"${item.productName}" no longer has enough stock for this order. Please adjust the quantity.`,
+            `"${item.label}" no longer has enough stock for this order. Please adjust the quantity.`,
           );
         }
         orderItems.push(
@@ -235,6 +239,8 @@ export class OrdersService {
             data: {
               orderId: order.id,
               productId: item.productId,
+              unitId: item.unitId,
+              unitName: item.unitName,
               quantity: item.quantity,
               unitPrice: item.unitPrice,
               lineTotal: item.lineTotal,
@@ -641,8 +647,8 @@ export class OrdersService {
       if (dto.status === OrderStatus.CANCELLED) {
         const items = await tx.orderItem.findMany({ where: { orderId } });
         for (const item of items) {
-          await tx.inventory.updateMany({
-            where: { productId: item.productId },
+          await tx.productUnit.update({
+            where: { id: item.unitId },
             data: { stockQuantity: { increment: item.quantity } },
           });
         }
@@ -697,37 +703,39 @@ export class OrdersService {
   private async resolveItems(items: OrderItemDto[]): Promise<ResolvedItem[]> {
     const resolved = await Promise.all(
       items.map(async (item) => {
-        const product = await this.prisma.product.findUnique({
-          where: { id: item.productId },
-          include: { inventory: true },
+        const unit = await this.prisma.productUnit.findUnique({
+          where: { id: item.unitId },
+          include: { product: true },
         });
 
-        if (!product || !product.isActive) {
-          throw new NotFoundException(`Product ${item.productId} not found or inactive`);
+        if (!unit || !unit.isActive || !unit.product.isActive) {
+          throw new NotFoundException('One of the items in your basket is no longer available. Please remove it and try again.');
         }
 
-        if (!product.inventory) {
-          throw new BadRequestException(`Product "${product.name}" has no inventory record`);
-        }
+        const label = `${unit.product.name} (${unit.name})`;
 
-        if (product.inventory.stockQuantity < item.quantity) {
+        if (unit.stockQuantity < item.quantity) {
           throw new BadRequestException(
-            `Insufficient stock for "${product.name}". Available: ${product.inventory.stockQuantity}, Requested: ${item.quantity}`,
+            unit.stockQuantity === 0
+              ? `"${label}" is out of stock.`
+              : `Only ${unit.stockQuantity} of "${label}" left in stock.`,
           );
         }
 
-        if (item.quantity < product.minOrderQuantity) {
+        if (item.quantity < unit.minOrderQuantity) {
           throw new BadRequestException(
-            `Minimum order quantity for "${product.name}" is ${product.minOrderQuantity}`,
+            `Minimum order for "${label}" is ${unit.minOrderQuantity}.`,
           );
         }
 
-        const unitPrice = product.price;
+        const unitPrice = unit.price;
         const lineTotal = unitPrice.mul(item.quantity).toDecimalPlaces(2);
 
         return {
-          productId: item.productId,
-          productName: product.name,
+          productId: unit.productId,
+          unitId: unit.id,
+          unitName: unit.name,
+          label,
           quantity: item.quantity,
           unitPrice,
           lineTotal,

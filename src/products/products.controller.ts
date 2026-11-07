@@ -27,6 +27,7 @@ import type { JwtPayload } from '../auth/types/jwt-payload.type';
 import {
   CreateProductDto,
   UpdateProductDto,
+  UpdateUnitStockDto,
   ProductViewResponseDto,
   LogViewResponseDto,
   RecommendedProductDto,
@@ -129,6 +130,19 @@ export class ProductsController {
     @Body() dto: UpdateProductDto,
   ) {
     return this.productsService.update(id, dto);
+  }
+
+  // PATCH /api/v1/products/:id/units/:unitId/stock — Admin only
+  // Stock count / low-stock alert for one selling unit (Inventory page).
+  @Patch(':id/units/:unitId/stock')
+  @Roles(Role.ADMIN)
+  @UseGuards(RolesGuard)
+  updateUnitStock(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('unitId', ParseUUIDPipe) unitId: string,
+    @Body() dto: UpdateUnitStockDto,
+  ) {
+    return this.productsService.updateUnitStock(id, unitId, dto);
   }
 
   // DELETE /api/v1/products/:id — Admin only

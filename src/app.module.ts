@@ -8,7 +8,6 @@ import { AuthModule } from './auth/auth.module';
 import { CategoriesModule } from './categories/categories.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { DeliveryZonesModule } from './delivery-zones/delivery-zones.module';
-import { InventoryModule } from './inventory/inventory.module';
 import { OrdersModule } from './orders/orders.module';
 import { PaymentsModule } from './payments/payments.module';
 import { ProductsModule } from './products/products.module';
@@ -39,7 +38,6 @@ import { THROTTLERS } from './common/throttle';
     PromoCodesModule,
     CategoriesModule,
     ProductsModule,
-    InventoryModule,
     OrdersModule,
     PaymentsModule,
     NotificationsModule,
