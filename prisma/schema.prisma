@@ -345,6 +345,8 @@ model OrderItem {
   // Copy of the unit's name at order time, so the order still reads "3 × Mudu"
   // even if the unit is renamed later.
   unitName  String
+  /// What the customer asked for on this item (e.g. "please blend the pepper").
+  note      String?     @db.VarChar(300)
   quantity  Int
   unitPrice Decimal     @db.Decimal(10, 2)
   lineTotal Decimal     @db.Decimal(12, 2)

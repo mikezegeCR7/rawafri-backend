@@ -12,7 +12,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 
 export class OrderItemDto {
   /** The selling unit being bought (e.g. Rice · Mudu). Its product is derived. */
@@ -24,6 +24,13 @@ export class OrderItemDto {
   @Min(1)
   @Type(() => Number)
   quantity: number;
+
+  /** Optional request for this item, shown to the admin (e.g. "blend the pepper"). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(300, { message: 'Keep each item note under 300 characters.' })
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() || undefined : value))
+  note?: string;
 }
 
 export class CreateOrderDto {

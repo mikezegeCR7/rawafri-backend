@@ -36,6 +36,7 @@ type ResolvedItem = {
   productId: string;
   unitId: string;
   unitName: string;
+  note: string | null;
   /** "Rice (Mudu)", for error messages. */
   label: string;
   quantity: number;
@@ -49,8 +50,12 @@ function mergeDuplicateItems(items: OrderItemDto[]): OrderItemDto[] {
   const byUnit = new Map<string, OrderItemDto>();
   for (const item of items) {
     const existing = byUnit.get(item.unitId);
-    if (existing) existing.quantity += item.quantity;
-    else byUnit.set(item.unitId, { unitId: item.unitId, quantity: item.quantity });
+    if (existing) {
+      existing.quantity += item.quantity;
+      if (item.note) existing.note = existing.note ? `${existing.note} / ${item.note}`.slice(0, 300) : item.note;
+    } else {
+      byUnit.set(item.unitId, { unitId: item.unitId, quantity: item.quantity, note: item.note });
+    }
   }
   return [...byUnit.values()];
 }
@@ -241,6 +246,7 @@ export class OrdersService {
               productId: item.productId,
               unitId: item.unitId,
               unitName: item.unitName,
+              note: item.note,
               quantity: item.quantity,
               unitPrice: item.unitPrice,
               lineTotal: item.lineTotal,
@@ -735,6 +741,7 @@ export class OrdersService {
           productId: unit.productId,
           unitId: unit.id,
           unitName: unit.name,
+          note: item.note ?? null,
           label,
           quantity: item.quantity,
           unitPrice,
