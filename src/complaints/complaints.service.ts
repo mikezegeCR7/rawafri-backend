@@ -8,6 +8,18 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CreateComplaintDto } from './dto/create-complaint.dto';
 import { UpdateComplaintDto } from './dto/update-complaint.dto';
+import {
+  adminNewComplaintEmail,
+  complaintReceivedEmail,
+  complaintUpdatedEmail,
+} from '../mail/templates';
+
+const COMPLAINT_STATUS_LABELS: Record<ComplaintStatus, string> = {
+  OPEN: 'Open',
+  IN_PROGRESS: 'Being handled',
+  RESOLVED: 'Resolved',
+  CLOSED: 'Closed',
+};
 
 @Injectable()
 export class ComplaintsService {
@@ -65,14 +77,38 @@ export class ComplaintsService {
     });
 
     try {
+      const [customer, order] = await Promise.all([
+        this.prisma.user.findUniqueOrThrow({
+          where: { id: customerId },
+          select: { id: true, email: true, firstName: true, lastName: true },
+        }),
+        complaint.orderId
+          ? this.prisma.order.findUnique({
+              where: { id: complaint.orderId },
+              select: { orderNumber: true },
+            })
+          : null,
+      ]);
+      const customerName = `${customer.firstName} ${customer.lastName}`;
+
+      await this.notificationsService.notifyCustomer({
+        user: customer,
+        type: 'SYSTEM',
+        orderId: complaint.orderId ?? undefined,
+        title: 'Complaint received',
+        message: `We've received your complaint "${complaint.subject}" and will get back to you.`,
+        email: complaintReceivedEmail(customer.firstName, complaint.subject, complaint.message, order?.orderNumber),
+      });
+
       await this.notificationsService.notifyAllAdmins(
         'SYSTEM',
         'New Complaint Filed',
-        `New complaint: "${complaint.subject}"`,
+        `New complaint from ${customerName}: "${complaint.subject}"`,
         complaint.orderId ?? undefined,
+        adminNewComplaintEmail(customerName, complaint.subject, complaint.message, order?.orderNumber),
       );
     } catch (error) {
-      console.error('Failed to notify admins of new complaint', error);
+      console.error('Failed to send new-complaint notifications', error);
     }
 
     return complaint;
@@ -220,18 +256,26 @@ export class ComplaintsService {
         },
       });
 
-    try {
-      await this.notificationsService.createSystemNotification(
-        complaint.customerId,
-        `Complaint ${dto.status ?? 'Updated'}`,
-        `Your complaint "${complaint.subject}" is now ${dto.status ?? 'updated'}.`,
-      );
-    } catch (error) {
-      console.error(
-        'Failed to create complaint notification',
-        error,
-      );
-    }
+    const statusLabel = COMPLAINT_STATUS_LABELS[updated.status];
+    await this.notificationsService.notifyCustomer({
+      user: complaint.customer,
+      type: 'SYSTEM',
+      orderId: complaint.orderId ?? undefined,
+      title: `Complaint ${statusLabel.toLowerCase()}`,
+      message: updated.adminResponse
+        ? `Update on "${complaint.subject}": ${updated.adminResponse}`
+        : `Your complaint "${complaint.subject}" is now ${statusLabel.toLowerCase()}.`,
+      email: complaintUpdatedEmail(
+        complaint.customer.firstName,
+        complaint.subject,
+        updated.status,
+        // Only include the response when it's new, so a status-only change
+        // doesn't repeat an old reply.
+        dto.adminResponse !== undefined && dto.adminResponse.trim() !== (complaint.adminResponse ?? '')
+          ? updated.adminResponse
+          : null,
+      ),
+    });
 
     return updated;
   }

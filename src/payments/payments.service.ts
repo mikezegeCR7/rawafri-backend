@@ -61,6 +61,12 @@ type PaymentListItem = Prisma.PaymentGetPayload<{
 }>;
 
 import { requireImage } from '../common/upload/image-file';
+import {
+  adminReceiptUploadedEmail,
+  paymentRejectedEmail,
+  paymentVerifiedEmail,
+  receiptReceivedEmail,
+} from '../mail/templates';
 
 @Injectable()
 export class PaymentsService {
@@ -180,12 +186,25 @@ export class PaymentsService {
     // added complexity/risk of a delete call here. Can be revisited with a
     // periodic cleanup job later if storage volume ever becomes a concern.
     
+    const { order } = updatedPayment;
+    const customerName = `${order.customer.firstName} ${order.customer.lastName}`;
+
+    await this.notificationsService.notifyCustomer({
+      user: order.customer,
+      type: 'PAYMENT',
+      orderId: order.id,
+      title: 'Receipt received',
+      message: `We're checking your receipt for order ${order.orderNumber}. We'll let you know once it's confirmed.`,
+      email: receiptReceivedEmail(order.customer.firstName, order),
+    });
+
     try {
       await this.notificationsService.notifyAllAdmins(
         'PAYMENT',
         'Payment Proof Uploaded',
-        `${updatedPayment.order.customer.firstName} ${updatedPayment.order.customer.lastName} uploaded a receipt for order ${updatedPayment.order.orderNumber} — needs review.`,
+        `${customerName} uploaded a receipt for order ${order.orderNumber} — needs review.`,
         updatedPayment.orderId,
+        adminReceiptUploadedEmail(order.orderNumber, customerName, order.totalAmount),
       );
     } catch (error) {
       console.error('Failed to notify admins of uploaded payment proof', error);
@@ -238,18 +257,16 @@ export class PaymentsService {
       return updatedPayment;
     });
 
-        try {
-  await this.notificationsService.createPaymentNotification(
-    payment.order.customer.id,
-    payment.orderId,
-    'Payment Verified',
-    `Your payment for order ${payment.order.orderNumber} has been verified.`,
-  );
-} catch (error) {
-  console.error('Failed to create payment notification', error);
-}
+    await this.notificationsService.notifyCustomer({
+      user: payment.order.customer,
+      type: 'PAYMENT',
+      orderId: payment.orderId,
+      title: 'Payment Verified',
+      message: `Your payment for order ${payment.order.orderNumber} has been verified.`,
+      email: paymentVerifiedEmail(payment.order.customer.firstName, payment.order),
+    });
 
-return updatedPayment;
+    return updatedPayment;
   }
 
   // ─── Admin: Reject Payment ─────────────────────────────────────────────────
@@ -281,17 +298,15 @@ return updatedPayment;
       include: PAYMENT_DETAILS_INCLUDE,
     });
 
-    try {
-  await this.notificationsService.createPaymentNotification(
-    payment.order.customer.id,
-    payment.orderId,
-    'Payment Rejected',
-    `Your payment for order ${payment.order.orderNumber} was rejected. Reason: ${dto.reason}`,
-  );
-} catch (error) {
-  console.error('Failed to create payment notification', error);
-}
+    await this.notificationsService.notifyCustomer({
+      user: payment.order.customer,
+      type: 'PAYMENT',
+      orderId: payment.orderId,
+      title: 'Payment Rejected',
+      message: `Your payment for order ${payment.order.orderNumber} was rejected. Reason: ${dto.reason}`,
+      email: paymentRejectedEmail(payment.order.customer.firstName, payment.order, dto.reason),
+    });
 
-return updatedPayment;
+    return updatedPayment;
   }
 }

@@ -24,6 +24,13 @@ import { BCRYPT_ROUNDS } from '../users/constants/users.constants';
 import { verifyOtpAttempt } from '../common/otp-attempts';
 import { CreateOrderDto, OrderItemDto } from './dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
+import {
+  adminNewOrderEmail,
+  deliveryCodeEmail,
+  orderPlacedEmail,
+  orderStatusEmail,
+  type EmailOrder,
+} from '../mail/templates';
 
 export interface CreatedOrder {
   order: Order;
@@ -35,6 +42,7 @@ export interface CreatedOrder {
 type ResolvedItem = {
   productId: string;
   unitId: string;
+  productName: string;
   unitName: string;
   note: string | null;
   /** "Rice (Mudu)", for error messages. */
@@ -74,6 +82,18 @@ const ALLOWED_STATUS_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   AWAITING_CUSTOMER_CONFIRMATION: [OrderStatus.DELIVERED],
   DELIVERED: [],
   CANCELLED: [],
+};
+
+/** In-app titles for each status a customer can be told about. */
+const ORDER_STATUS_TITLES: Record<OrderStatus, string> = {
+  ORDER_RECEIVED: 'Order received',
+  AWAITING_PAYMENT: 'Waiting for your payment',
+  PAYMENT_CONFIRMED: 'Payment confirmed',
+  PREPARING_ORDER: 'Preparing your order',
+  OUT_FOR_DELIVERY: 'Out for delivery',
+  AWAITING_CUSTOMER_CONFIRMATION: 'Arrived — please confirm delivery',
+  DELIVERED: 'Order delivered',
+  CANCELLED: 'Order cancelled',
 };
 
 @Injectable()
@@ -170,16 +190,7 @@ export class OrdersService {
       }
     }
 
-    try {
-      await this.notificationsService.notifyAllAdmins(
-        'ORDER_STATUS',
-        'New Order Received',
-        `Order ${result.order.orderNumber} was just placed — ₦${Number(result.order.totalAmount).toLocaleString('en-NG')}.`,
-        result.order.id,
-      );
-    } catch (error) {
-      console.error('Failed to notify admins of new order', error);
-    }
+    await this.notifyOrderPlaced(customerId, result.order, resolvedItems);
 
     return result;
   }
@@ -419,16 +430,9 @@ export class OrdersService {
       },
     });
 
-    await this.mailService.sendMail(
+    await this.mailService.send(
       order.customer.email,
-      'RawAfri Delivery Confirmation Code',
-      `
-        <h2>Confirm Your Delivery</h2>
-        <p>Your delivery confirmation code is:</p>
-        <h1>${otp}</h1>
-        <p>Enter this code in the app to confirm you've received your order.</p>
-        <p>This code expires in 10 minutes.</p>
-      `,
+      deliveryCodeEmail(order.orderNumber, otp),
     );
 
     return { message: 'A confirmation code has been sent to your email.' };
@@ -545,6 +549,25 @@ export class OrdersService {
 
       return updated;
     });
+
+    await this.notificationsService.notifyCustomer({
+      user: updatedOrder.customer,
+      type: 'ORDER_STATUS',
+      orderId,
+      title: 'Order delivered',
+      message: `Order ${updatedOrder.orderNumber} is complete. Thank you for shopping with RawAfri!`,
+      email: orderStatusEmail(updatedOrder.customer.firstName, updatedOrder, OrderStatus.DELIVERED),
+    });
+    try {
+      await this.notificationsService.notifyAllAdmins(
+        'ORDER_STATUS',
+        'Order Delivered',
+        `${updatedOrder.customer.firstName} ${updatedOrder.customer.lastName} confirmed delivery of order ${updatedOrder.orderNumber}.`,
+        orderId,
+      );
+    } catch (error) {
+      console.error('Failed to notify admins of delivered order', error);
+    }
 
     return updatedOrder;
   }
@@ -703,7 +726,70 @@ export class OrdersService {
       return updatedOrder;
     });
 
+    const title = ORDER_STATUS_TITLES[dto.status];
+    await this.notificationsService.notifyCustomer({
+      user: updated.customer,
+      type: 'ORDER_STATUS',
+      orderId,
+      title,
+      message: `Order ${updated.orderNumber}: ${title.toLowerCase()}.${dto.note ? ` ${dto.note}` : ''}`,
+      email: orderStatusEmail(updated.customer.firstName, updated, dto.status, dto.note),
+    });
+
     return updated;
+  }
+
+  /** Emails the customer their order and how to pay, and alerts the admins. */
+  private async notifyOrderPlaced(
+    customerId: string,
+    order: Order,
+    items: ResolvedItem[],
+  ): Promise<void> {
+    try {
+      const [customer, bankAccounts] = await Promise.all([
+        this.prisma.user.findUniqueOrThrow({
+          where: { id: customerId },
+          select: { id: true, email: true, firstName: true, lastName: true },
+        }),
+        this.prisma.bankAccount.findMany({
+          where: { isActive: true },
+          orderBy: { createdAt: 'asc' },
+          select: { bankName: true, accountName: true, accountNumber: true },
+        }),
+      ]);
+
+      const emailOrder: EmailOrder = {
+        ...order,
+        items: items.map((i) => ({
+          productName: i.productName,
+          unitName: i.unitName,
+          quantity: i.quantity,
+          lineTotal: i.lineTotal,
+          note: i.note,
+        })),
+      };
+      const total = `₦${Number(order.totalAmount).toLocaleString('en-NG')}`;
+
+      await this.notificationsService.notifyCustomer({
+        user: customer,
+        type: 'ORDER_STATUS',
+        orderId: order.id,
+        title: 'Order placed',
+        message: `We've received order ${order.orderNumber}. Transfer ${total} and upload your receipt to get it moving.`,
+        email: orderPlacedEmail(customer.firstName, emailOrder, bankAccounts),
+      });
+
+      const customerName = `${customer.firstName} ${customer.lastName}`;
+      await this.notificationsService.notifyAllAdmins(
+        'ORDER_STATUS',
+        'New Order Received',
+        `Order ${order.orderNumber} was just placed — ${total}.`,
+        order.id,
+        adminNewOrderEmail(emailOrder, customerName),
+      );
+    } catch (error) {
+      console.error('Failed to send new-order notifications', error);
+    }
   }
 
   private async resolveItems(items: OrderItemDto[]): Promise<ResolvedItem[]> {
@@ -740,6 +826,7 @@ export class OrdersService {
         return {
           productId: unit.productId,
           unitId: unit.id,
+          productName: unit.product.name,
           unitName: unit.name,
           note: item.note ?? null,
           label,

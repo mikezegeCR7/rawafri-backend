@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { MailerService } from '@nestjs-modules/mailer';
+import type { EmailContent } from './templates';
 
 @Injectable()
 export class MailService {
@@ -9,6 +10,7 @@ export class MailService {
     private readonly mailerService: MailerService,
   ) {}
 
+  /** Sends now and throws if it fails — for codes the person is waiting on. */
   async sendMail(
     to: string,
     subject: string,
@@ -21,14 +23,32 @@ export class MailService {
         html,
       });
 
-      this.logger.log(`Email sent to ${to}`);
+      this.logger.log(`Email sent to ${to}: ${subject}`);
     } catch (error) {
       this.logger.error(
-        `Failed to send email to ${to}`,
+        `Failed to send email to ${to}: ${subject}`,
         error instanceof Error ? error.stack : undefined,
       );
 
       throw error;
+    }
+  }
+
+  async send(to: string, email: EmailContent): Promise<void> {
+    return this.sendMail(to, email.subject, email.html);
+  }
+
+  /**
+   * Sends in the background for updates (order placed, payment confirmed…):
+   * a slow or failing mail server must never hold up or fail the action
+   * that triggered it. Failures are logged.
+   */
+  sendInBackground(to: string | string[], email: EmailContent): void {
+    const recipients = (Array.isArray(to) ? to : [to]).filter(Boolean);
+    for (const recipient of recipients) {
+      this.send(recipient, email).catch(() => {
+        // Already logged in sendMail.
+      });
     }
   }
 }

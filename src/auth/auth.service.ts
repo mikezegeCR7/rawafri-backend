@@ -21,6 +21,11 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { AuthResponse } from './types/auth-response.type';
 import { MailService } from '../mail/mail.service';
+import {
+  passwordChangedEmail,
+  passwordResetCodeEmail,
+  welcomeEmail,
+} from '../mail/templates';
 import { PrismaService } from '../prisma/prisma.service';
 import { verifyOtpAttempt } from '../common/otp-attempts';
 
@@ -52,6 +57,8 @@ export class AuthService {
       lastName: dto.lastName,
       role: Role.CUSTOMER,
     });
+
+    this.mailService.sendInBackground(user.email, welcomeEmail(user.firstName));
 
     return this.issueAuthResponse(user);
   }
@@ -116,17 +123,7 @@ export class AuthService {
         ),
       },
     });
-    await this.mailService.sendMail(
-      user.email,
-      'RawAfri Password Reset OTP',
-      `
-        <h2>Password Reset</h2>
-        <p>Your verification code is:</p>
-        <h1>${otp}</h1>
-        <p>This code expires in 10 minutes.</p>
-        <p>If you did not request this, ignore this email.</p>
-      `,
-    );
+    await this.mailService.send(user.email, passwordResetCodeEmail(otp));
     return {
       message:
         'If an account with that email exists, an OTP has been sent.',
@@ -210,6 +207,7 @@ export class AuthService {
         purpose: OtpPurpose.PASSWORD_RESET,
       },
     });
+    this.mailService.sendInBackground(user.email, passwordChangedEmail(user.firstName));
     return {
       message:
         'Password reset successfully. You can now log in with your new password.',
