@@ -3,6 +3,8 @@ import { JwtService } from '@nestjs/jwt';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { MailService } from '../mail/mail.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { UsersService } from '../users/users.service';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
@@ -22,6 +24,12 @@ describe('AuthService', () => {
 
   const jwtService = {
     signAsync: jest.fn(),
+  };
+
+  const mailService = {
+    send: jest.fn(),
+    sendMail: jest.fn(),
+    sendInBackground: jest.fn(),
   };
 
   const safeUser = {
@@ -63,6 +71,8 @@ describe('AuthService', () => {
         AuthService,
         { provide: UsersService, useValue: usersService },
         { provide: JwtService, useValue: jwtService },
+        { provide: MailService, useValue: mailService },
+        { provide: PrismaService, useValue: {} },
       ],
     }).compile();
 

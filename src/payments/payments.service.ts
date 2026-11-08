@@ -2,8 +2,9 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  ConflictException,
 } from '@nestjs/common';
-import { PaymentStatus, Prisma } from '@prisma/client';
+import { OrderStatus, PaymentStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RejectPaymentDto } from './dto';
@@ -67,6 +68,12 @@ import {
   paymentVerifiedEmail,
   receiptReceivedEmail,
 } from '../mail/templates';
+
+/** A payment can only be accepted while its order is still waiting for one. */
+const PAYABLE_ORDER_STATUSES: OrderStatus[] = [
+  OrderStatus.ORDER_RECEIVED,
+  OrderStatus.AWAITING_PAYMENT,
+];
 
 @Injectable()
 export class PaymentsService {
@@ -159,6 +166,14 @@ export class PaymentsService {
       );
     }
 
+    if (!PAYABLE_ORDER_STATUSES.includes(payment.order.status)) {
+      throw new BadRequestException(
+        payment.order.status === OrderStatus.CANCELLED
+          ? 'This order was cancelled, so it no longer takes a payment.'
+          : 'This order is no longer waiting for a payment.',
+      );
+    }
+
     const image = requireImage(file);
     const key = `payments/${paymentId}-${Date.now()}.${image.extension}`;
     const proofImageUrl = await this.storageService.uploadFile(
@@ -167,9 +182,11 @@ export class PaymentsService {
       image.contentType,
     );
 
-    const updatedPayment = await this.prisma.payment.update({
+    // Never turn a payment an admin verified during the upload back into "uploaded".
+    const uploaded = await this.prisma.payment.updateMany({
       where: {
         id: paymentId,
+        status: { not: PaymentStatus.VERIFIED },
       },
       data: {
         proofImageUrl,
@@ -178,6 +195,14 @@ export class PaymentsService {
         rejectedAt: null,
         rejectionReason: null,
       },
+    });
+    if (uploaded.count === 0) {
+      throw new BadRequestException(
+        'Cannot upload proof for a verified payment',
+      );
+    }
+    const updatedPayment = await this.prisma.payment.findUniqueOrThrow({
+      where: { id: paymentId },
       include: PAYMENT_DETAILS_INCLUDE,
     });
 
@@ -227,22 +252,40 @@ export class PaymentsService {
       );
     }
 
+    if (!PAYABLE_ORDER_STATUSES.includes(payment.order.status)) {
+      throw new BadRequestException(
+        payment.order.status === OrderStatus.CANCELLED
+          ? 'This order was cancelled, so its payment can no longer be verified.'
+          : 'This order is no longer waiting for a payment.',
+      );
+    }
+
     const updatedPayment = await this.prisma.$transaction(async (tx) => {
-      const updatedPayment = await tx.payment.update({
-        where: { id },
+      // Conditional updates: if another admin verified or rejected this
+      // payment, or the order was cancelled, a moment ago, nothing changes.
+      const paid = await tx.payment.updateMany({
+        where: { id, status: PaymentStatus.UPLOADED },
         data: {
           status: PaymentStatus.VERIFIED,
           verifiedById: adminId,
           verifiedAt: new Date(),
         },
-        include: PAYMENT_DETAILS_INCLUDE,
       });
-
-      await tx.order.update({
-        where: { id: payment.orderId },
+      const moved = await tx.order.updateMany({
+        where: { id: payment.orderId, status: { in: PAYABLE_ORDER_STATUSES } },
         data: {
-          status: 'PAYMENT_CONFIRMED',
+          status: OrderStatus.PAYMENT_CONFIRMED,
         },
+      });
+      if (paid.count === 0 || moved.count === 0) {
+        throw new ConflictException(
+          'This payment or order was just changed by someone else. Refresh and try again.',
+        );
+      }
+
+      const updatedPayment = await tx.payment.findUniqueOrThrow({
+        where: { id },
+        include: PAYMENT_DETAILS_INCLUDE,
       });
 
       await tx.orderStatusHistory.create({
@@ -287,14 +330,27 @@ export class PaymentsService {
       );
     }
 
-    const updatedPayment = await this.prisma.payment.update({
-      where: { id },
+    // Only if it is still pending/uploaded — never overwrite a payment another
+    // admin verified a moment ago.
+    const rejected = await this.prisma.payment.updateMany({
+      where: {
+        id,
+        status: { in: [PaymentStatus.PENDING, PaymentStatus.UPLOADED] },
+      },
       data: {
         status: PaymentStatus.REJECTED,
         rejectedById: adminId,
         rejectionReason: dto.reason,
         rejectedAt: new Date(),
       },
+    });
+    if (rejected.count === 0) {
+      throw new ConflictException(
+        'This payment was just changed by someone else. Refresh and try again.',
+      );
+    }
+    const updatedPayment = await this.prisma.payment.findUniqueOrThrow({
+      where: { id },
       include: PAYMENT_DETAILS_INCLUDE,
     });
 

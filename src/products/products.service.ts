@@ -100,7 +100,7 @@ export class ProductsService {
       include: PUBLIC_INCLUDE,
     });
 
-    if (!product || !product.isActive || product.units.length === 0) {
+    if (!product || !product.isActive || !product.category.isActive || product.units.length === 0) {
       throw new NotFoundException(`Product ${id} not found`);
     }
 

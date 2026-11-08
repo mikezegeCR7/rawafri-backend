@@ -502,11 +502,17 @@ export class OrdersService {
     note: string,
   ): Promise<Order> {
     const updatedOrder = await this.prisma.$transaction(async (tx) => {
-      const updated = await tx.order.update({
+      // Only once: a double tap (or a second device) can't record it twice.
+      const moved = await tx.order.updateMany({
+        where: { id: orderId, status: OrderStatus.AWAITING_CUSTOMER_CONFIRMATION },
+        data: { status: OrderStatus.DELIVERED },
+      });
+      if (moved.count === 0) {
+        throw new BadRequestException('This delivery has already been confirmed.');
+      }
+
+      const updated = await tx.order.findUniqueOrThrow({
         where: { id: orderId },
-        data: {
-          status: OrderStatus.DELIVERED,
-        },
         include: {
           customer: {
             select: {
@@ -797,10 +803,10 @@ export class OrdersService {
       items.map(async (item) => {
         const unit = await this.prisma.productUnit.findUnique({
           where: { id: item.unitId },
-          include: { product: true },
+          include: { product: { include: { category: true } } },
         });
 
-        if (!unit || !unit.isActive || !unit.product.isActive) {
+        if (!unit || !unit.isActive || !unit.product.isActive || !unit.product.category.isActive) {
           throw new NotFoundException('One of the items in your basket is no longer available. Please remove it and try again.');
         }
 
