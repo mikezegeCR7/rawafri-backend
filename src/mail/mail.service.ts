@@ -2,6 +2,11 @@ import { Injectable, Logger } from '@nestjs/common';
 import { MailerService } from '@nestjs-modules/mailer';
 import type { EmailContent } from './templates';
 
+/** Domains reserved for testing (RFC 2606 / RFC 6761) — mail to them can never arrive. */
+const RESERVED_DOMAIN = /@(?:[^@]+\.)?(?:example\.(?:com|net|org)|[^@]+\.(?:test|example|invalid|localhost))$|@(?:example|test|invalid|localhost)$/i;
+
+export const isUndeliverable = (email: string) => RESERVED_DOMAIN.test(email.trim());
+
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
@@ -16,6 +21,13 @@ export class MailService {
     subject: string,
     html: string,
   ): Promise<void> {
+    if (isUndeliverable(to)) {
+      // Seed / test accounts use reserved domains (example.test, example.com…).
+      // Sending to them only produces bounces in the sender's inbox.
+      this.logger.log(`Skipped email to test address ${to}: ${subject}`);
+      return;
+    }
+
     try {
       await this.mailerService.sendMail({
         to,
