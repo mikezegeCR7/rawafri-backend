@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { MailerService } from '@nestjs-modules/mailer';
-import type { EmailContent } from './templates';
+import { htmlToText, type EmailContent } from './templates';
 
 /** Domains reserved for testing (RFC 2606 / RFC 6761) — mail to them can never arrive. */
 const RESERVED_DOMAIN = /@(?:[^@]+\.)?(?:example\.(?:com|net|org)|[^@]+\.(?:test|example|invalid|localhost))$|@(?:example|test|invalid|localhost)$/i;
@@ -33,6 +33,7 @@ export class MailService {
         to,
         subject,
         html,
+        text: htmlToText(html),
       });
 
       this.logger.log(`Email sent to ${to}: ${subject}`);

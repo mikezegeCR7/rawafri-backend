@@ -8,6 +8,37 @@
 
 export type EmailContent = { subject: string; html: string };
 
+/**
+ * Plain-text copy of an email, sent alongside the HTML. Mail apps show it
+ * as plain text (nothing in it is run or rendered), and spam filters trust
+ * messages that carry one. Built from the HTML so the two never drift.
+ */
+export function htmlToText(html: string): string {
+  return html
+    .replace(/<head[\s\S]*?<\/head>/gi, '')
+    // Links become "Label: https://…" so they stay usable.
+    .replace(/<a\b[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (_m, href: string, label: string) => {
+      const text = label.replace(/<[^>]+>/g, '').trim();
+      return text && text !== href ? `${text}: ${href}` : href;
+    })
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|h1|h2|tr|table|li)>/gi, '\n')
+    .replace(/<\/td>/gi, '  ')
+    .replace(/<hr[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+    .split('\n')
+    .map((line) => line.replace(/[ \t]+/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const COLORS = {
@@ -80,11 +111,12 @@ const rows = (pairs: [string, string][]) => `
       .join('')}
   </table>`;
 
-function layout(heading: string, body: string, preheader = ''): string {
+// `_summary` is kept for readability at call sites; hidden preview text is
+// deliberately not rendered, because spam filters count hidden text against us.
+function layout(heading: string, body: string, _summary = ''): string {
   return `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;padding:0;background:${COLORS.cream};font-family:Helvetica,Arial,sans-serif">
-  <span style="display:none;max-height:0;overflow:hidden;opacity:0">${esc(preheader)}</span>
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${COLORS.cream}">
     <tr><td align="center" style="padding:28px 14px">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px">
